@@ -5,6 +5,6 @@ import Foundation
 /// - `production` — Connects to the live backend; performs real validation.
 /// - `sandbox` — Uses mock session data; skips network during initialization.
 public enum Environment: String, Sendable {
-    case production = "production"
-    case sandbox = "sandbox"
+    case production = "PRODUCTION"
+    case sandbox = "SANDBOX"
 }
