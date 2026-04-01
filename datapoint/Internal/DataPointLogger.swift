@@ -14,7 +14,7 @@ enum DataPointLogger {
 
     static func w(_ message: String) {
         guard isEnabled else { return }
-        os_log("%{public}@", log: log, type: .default, message)
+        os_log("%{public}@", log: log, type: .debug, message)
     }
 
     static func e(_ message: String, error: Error? = nil) {

@@ -15,6 +15,7 @@ final class TaskWebViewController: UIViewController, WKNavigationDelegate, WKUID
 
     private var webView: WKWebView!
     private let taskBridge = TaskBridgeMessageHandler()
+    private let consoleBridge = ConsoleBridgeMessageHandler()
     private var audioHelper: WebViewAudioVolumeHelper?
     private var networkMonitor: NWPathMonitor?
     private let networkQueue = DispatchQueue(label: "com.datapoint.sdk.network")
@@ -174,6 +175,10 @@ final class TaskWebViewController: UIViewController, WKNavigationDelegate, WKUID
     }
 
     private func setupBridgeCallbacks() {
+        consoleBridge.onConsoleMessage = { level, message in
+            DataPointLogger.d("WebView console [\(level)] \(message)")
+        }
+
         taskBridge.onCompleteTask = { [weak self] payload in
             DataPoint.notifyTaskCompletedFromWebView(payload)
             self?.dismissAfterCallback()
@@ -396,5 +401,16 @@ final class TaskWebViewController: UIViewController, WKNavigationDelegate, WKUID
             completionHandler()
         })
         present(alert, animated: true)
+    }
+}
+
+private final class ConsoleBridgeMessageHandler: NSObject, WKScriptMessageHandler {
+    var onConsoleMessage: ((String, String) -> Void)?
+
+    func userContentController(_ userContentController: WKUserContentController, didReceive message: WKScriptMessage) {
+        guard let body = message.body as? [String: Any] else { return }
+        let level = (body["level"] as? String) ?? "log"
+        let text = (body["message"] as? String) ?? ""
+        onConsoleMessage?(level, text)
     }
 }
