@@ -101,7 +101,7 @@ public enum DataPoint {
                 worker.async {
                     let ts = Int64(Date().timeIntervalSince1970)
                     let result = DataPointApi.validate(
-                        baseURL: SdkConstants.productionBaseURL,
+                        baseURL: SdkConstants.apiBaseURL(for: environment),
                         apiKey: apiKey,
                         userId: userId,
                         deviceId: prefs.deviceId,
@@ -241,7 +241,7 @@ public enum DataPoint {
 
         worker.async {
             let result = DataPointApi.setAppUserId(
-                baseURL: SdkConstants.productionBaseURL,
+                baseURL: SdkConstants.apiBaseURL(for: Self.environment),
                 sessionToken: token,
                 appUserId: appUserId
             )
@@ -428,7 +428,7 @@ public enum DataPoint {
 
         worker.async {
             let result = DataPointApi.setAttributes(
-                baseURL: SdkConstants.productionBaseURL,
+                baseURL: SdkConstants.apiBaseURL(for: Self.environment),
                 sessionToken: token,
                 attributes: attributes
             )

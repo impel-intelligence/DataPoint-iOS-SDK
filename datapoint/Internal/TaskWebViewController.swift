@@ -74,6 +74,7 @@ final class TaskWebViewController: UIViewController, WKNavigationDelegate, WKUID
         audioHelper?.stopObserving()
         if let webView {
             webView.configuration.userContentController.removeScriptMessageHandler(forName: SdkConstants.jsBridgeTask)
+            webView.configuration.userContentController.removeScriptMessageHandler(forName: SdkConstants.jsBridgeConsole)
         }
     }
 
@@ -129,20 +130,23 @@ final class TaskWebViewController: UIViewController, WKNavigationDelegate, WKUID
         config.websiteDataStore = .default()
 
         config.userContentController.add(taskBridge, name: SdkConstants.jsBridgeTask)
+        config.userContentController.add(consoleBridge, name: SdkConstants.jsBridgeConsole)
         injectDataPointTaskShim(into: config.userContentController)
         injectDataPointApp(into: config.userContentController)
+        injectConsoleLoggerShim(into: config.userContentController)
 
         let wv = WKWebView(frame: .zero, configuration: config)
         wv.backgroundColor = .clear
         wv.isOpaque = false
         wv.navigationDelegate = self
         wv.uiDelegate = self
+        wv.scrollView.contentInsetAdjustmentBehavior = .never
         wv.allowsBackForwardNavigationGestures = true
         wv.translatesAutoresizingMaskIntoConstraints = false
 
         view.addSubview(wv)
         NSLayoutConstraint.activate([
-            wv.topAnchor.constraint(equalTo: view.safeAreaLayoutGuide.topAnchor),
+            wv.topAnchor.constraint(equalTo: view.topAnchor),
             wv.leadingAnchor.constraint(equalTo: view.leadingAnchor),
             wv.trailingAnchor.constraint(equalTo: view.trailingAnchor),
             wv.bottomAnchor.constraint(equalTo: view.bottomAnchor)
@@ -154,24 +158,6 @@ final class TaskWebViewController: UIViewController, WKNavigationDelegate, WKUID
         helper.attach(to: wv)
         audioHelper = helper
 
-        let close = UIButton(type: .system)
-        close.setTitle(NSLocalizedString("Close", comment: ""), for: .normal)
-        close.setTitleColor(.white, for: .normal)
-        close.backgroundColor = UIColor.black.withAlphaComponent(0.45)
-        close.layer.cornerRadius = 8
-        close.contentEdgeInsets = UIEdgeInsets(top: 8, left: 12, bottom: 8, right: 12)
-        close.addTarget(self, action: #selector(closeTapped), for: .touchUpInside)
-        close.translatesAutoresizingMaskIntoConstraints = false
-        view.addSubview(close)
-        NSLayoutConstraint.activate([
-            close.leadingAnchor.constraint(equalTo: view.safeAreaLayoutGuide.leadingAnchor, constant: 16),
-            close.topAnchor.constraint(equalTo: view.safeAreaLayoutGuide.topAnchor, constant: 8)
-        ])
-    }
-
-    @objc private func closeTapped() {
-        DataPoint.notifyClosedFromWebView()
-        dismiss(animated: true)
     }
 
     private func setupBridgeCallbacks() {
@@ -258,6 +244,48 @@ final class TaskWebViewController: UIViewController, WKNavigationDelegate, WKUID
         })();
         """
         ucc.addUserScript(WKUserScript(source: js, injectionTime: .atDocumentStart, forMainFrameOnly: true))
+    }
+
+    private func injectConsoleLoggerShim(into ucc: WKUserContentController) {
+        let bridge = SdkConstants.jsBridgeConsole
+        let js = """
+        (function() {
+            if (window.__dpConsoleHooked) return;
+            window.__dpConsoleHooked = true;
+
+            function stringifyArg(arg) {
+                try {
+                    if (typeof arg === 'string') return arg;
+                    if (arg === undefined) return 'undefined';
+                    if (arg === null) return 'null';
+                    return JSON.stringify(arg);
+                } catch (_) {
+                    try { return String(arg); } catch (_) { return '[unprintable]'; }
+                }
+            }
+
+            function post(level, args) {
+                try {
+                    var message = Array.prototype.map.call(args, stringifyArg).join(' ');
+                    window.webkit.messageHandlers.\(bridge).postMessage({
+                        level: level,
+                        message: message
+                    });
+                } catch (_) {}
+            }
+
+            ['log', 'info', 'warn', 'error', 'debug'].forEach(function(level) {
+                var original = console[level];
+                console[level] = function() {
+                    post(level, arguments);
+                    if (typeof original === 'function') {
+                        original.apply(console, arguments);
+                    }
+                };
+            });
+        })();
+        """
+        ucc.addUserScript(WKUserScript(source: js, injectionTime: .atDocumentStart, forMainFrameOnly: false))
     }
 
     private static func escapeForJS(_ string: String) -> String {
