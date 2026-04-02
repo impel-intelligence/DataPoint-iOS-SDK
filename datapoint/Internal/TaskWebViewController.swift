@@ -130,10 +130,8 @@ final class TaskWebViewController: UIViewController, WKNavigationDelegate, WKUID
         config.websiteDataStore = .default()
 
         config.userContentController.add(taskBridge, name: SdkConstants.jsBridgeTask)
-        config.userContentController.add(consoleBridge, name: SdkConstants.jsBridgeConsole)
         injectDataPointTaskShim(into: config.userContentController)
         injectDataPointApp(into: config.userContentController)
-        injectConsoleLoggerShim(into: config.userContentController)
 
         let wv = WKWebView(frame: .zero, configuration: config)
         wv.backgroundColor = .clear
@@ -244,48 +242,6 @@ final class TaskWebViewController: UIViewController, WKNavigationDelegate, WKUID
         })();
         """
         ucc.addUserScript(WKUserScript(source: js, injectionTime: .atDocumentStart, forMainFrameOnly: true))
-    }
-
-    private func injectConsoleLoggerShim(into ucc: WKUserContentController) {
-        let bridge = SdkConstants.jsBridgeConsole
-        let js = """
-        (function() {
-            if (window.__dpConsoleHooked) return;
-            window.__dpConsoleHooked = true;
-
-            function stringifyArg(arg) {
-                try {
-                    if (typeof arg === 'string') return arg;
-                    if (arg === undefined) return 'undefined';
-                    if (arg === null) return 'null';
-                    return JSON.stringify(arg);
-                } catch (_) {
-                    try { return String(arg); } catch (_) { return '[unprintable]'; }
-                }
-            }
-
-            function post(level, args) {
-                try {
-                    var message = Array.prototype.map.call(args, stringifyArg).join(' ');
-                    window.webkit.messageHandlers.\(bridge).postMessage({
-                        level: level,
-                        message: message
-                    });
-                } catch (_) {}
-            }
-
-            ['log', 'info', 'warn', 'error', 'debug'].forEach(function(level) {
-                var original = console[level];
-                console[level] = function() {
-                    post(level, arguments);
-                    if (typeof original === 'function') {
-                        original.apply(console, arguments);
-                    }
-                };
-            });
-        })();
-        """
-        ucc.addUserScript(WKUserScript(source: js, injectionTime: .atDocumentStart, forMainFrameOnly: false))
     }
 
     private static func escapeForJS(_ string: String) -> String {
