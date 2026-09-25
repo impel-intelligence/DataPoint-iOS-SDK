@@ -10,7 +10,7 @@ Add the following to your `Package.swift`:
 
 ```swift
 dependencies: [
-    .package(url: "https://github.com/trydatapoint/datapoint-ios-sdk.git", from: "1.0.0")
+    .package(url: "https://github.com/trydatapoint/datapoint-ios-sdk.git", from: "1.1.0")
 ]
 ```
 
@@ -71,7 +71,39 @@ extension YourClass: DataPointListener {
     func onError(message: String, code: Int) {
         // Handle error
     }
+
+    // Optional: host app went to background / returned while the task UI was visible.
+    func onAppLifecycleEvent(_ state: DataPointAppLifecycleState) {
+        // .didEnterBackground or .willEnterForeground
+    }
 }
+```
+
+## Opening Links in a Browser
+
+Task pages on DataPoint domains render inside the SDK's `WKWebView`. Anything else leaves it:
+
+| The page does                                     | Where it opens                                          |
+| ------------------------------------------------- | ------------------------------------------------------- |
+| Link / redirect to a non-DataPoint `http(s)` host | In-app `SFSafariViewController`                         |
+| `target="_blank"` link / `window.open`            | In-app browser (or the WebView, if the host is DataPoint) |
+| `mailto:` `tel:` `itms-apps:` …                   | The app that handles that scheme                        |
+| `javascript:` `file:` `data:` `about:`            | Blocked                                                 |
+
+The task screen stays presented underneath, so closing the browser returns the user to their
+task. If a task completes while the browser is open, the task screen is dismissed once the
+browser closes.
+
+### From the task page
+
+The web page can also open a URL explicitly:
+
+```js
+// In-app SFSafariViewController (default)
+DataPointTask.openExternalUrl("https://example.com/offer");
+
+// System browser (Safari app)
+DataPointTask.openExternalUrl("https://example.com/offer", "external");
 ```
 
 ## Requirements

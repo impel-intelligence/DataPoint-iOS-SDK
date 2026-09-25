@@ -330,6 +330,11 @@ public enum DataPoint {
         postOnMain { listener?.onError(message: message, code: code) }
     }
 
+    static func notifyAppLifecycleEventFromTaskScreen(_ state: DataPointAppLifecycleState) {
+        DataPointLogger.d("App lifecycle (task UI): \(state.rawValue)")
+        postOnMain { listener?.onAppLifecycleEvent(state) }
+    }
+
     static func handleSessionExpired(from viewController: UIViewController, webView: WKWebView, onNewToken: @escaping (String) -> Void) {
         guard let prefs = preferences, let key = apiKey else { return }
 
