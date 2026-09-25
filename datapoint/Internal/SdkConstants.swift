@@ -1,7 +1,7 @@
 import Foundation
 
 enum SdkConstants {
-    static let sdkVersion = "1.0.0"
+    static let sdkVersion = "1.1.0"
     static let platform = "ios"
 
     /// Live API (used when `Environment.production`).

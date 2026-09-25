@@ -19,5 +19,10 @@ let package = Package(
             name: "DataPointSDK",
             path: "datapoint"
         ),
+        .testTarget(
+            name: "DataPointSDKTests",
+            dependencies: ["DataPointSDK"],
+            path: "Tests/DataPointSDKTests"
+        ),
     ]
 )
