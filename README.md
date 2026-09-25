@@ -92,19 +92,8 @@ Task pages on DataPoint domains render inside the SDK's `WKWebView`. Anything el
 
 The task screen stays presented underneath, so closing the browser returns the user to their
 task. If a task completes while the browser is open, the task screen is dismissed once the
-browser closes.
-
-### From the task page
-
-The web page can also open a URL explicitly:
-
-```js
-// In-app SFSafariViewController (default)
-DataPointTask.openExternalUrl("https://example.com/offer");
-
-// System browser (Safari app)
-DataPointTask.openExternalUrl("https://example.com/offer", "external");
-```
+browser closes. Which target a task's CTA uses (in-app or external) is configured per job in
+DataPoint, not in your app.
 
 ## Requirements
 
