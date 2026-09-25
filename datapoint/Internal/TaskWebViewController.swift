@@ -1,9 +1,10 @@
 import Network
+import SafariServices
 import UIKit
 import WebKit
 
 /// Full-screen task UI (Android `TaskWebActivity` parity).
-final class TaskWebViewController: UIViewController, WKNavigationDelegate, WKUIDelegate {
+final class TaskWebViewController: UIViewController, WKNavigationDelegate, WKUIDelegate, SFSafariViewControllerDelegate {
 
     private let taskURL: URL
     private var sessionToken: String
@@ -21,6 +22,7 @@ final class TaskWebViewController: UIViewController, WKNavigationDelegate, WKUID
     private let networkQueue = DispatchQueue(label: "com.datapoint.sdk.network")
     private var pendingReloadURL: URL?
     private var hasReloadedAfterOffline = false
+    private var appLifecycleObservers: [NSObjectProtocol] = []
 
     private let errorContainer = UIView()
     private let errorLabel = UILabel()
@@ -59,6 +61,7 @@ final class TaskWebViewController: UIViewController, WKNavigationDelegate, WKUID
         buildWebView()
         setupBridgeCallbacks()
         setupNetworkMonitoring()
+        registerAppLifecycleObservers()
         loadTaskPage()
     }
 
@@ -70,6 +73,7 @@ final class TaskWebViewController: UIViewController, WKNavigationDelegate, WKUID
     }
 
     deinit {
+        removeAppLifecycleObservers()
         networkMonitor?.cancel()
         audioHelper?.stopObserving()
         if let webView {
@@ -189,6 +193,9 @@ final class TaskWebViewController: UIViewController, WKNavigationDelegate, WKUID
             DataPoint.notifyClosedFromWebView()
             self?.dismissAfterCallback()
         }
+        taskBridge.onOpenExternalUrl = { [weak self] url, mode in
+            self?.openExternalUrl(url, mode: mode)
+        }
         taskBridge.onSessionExpired = { [weak self] in
             guard let self, let webView = self.webView else { return }
             DataPoint.handleSessionExpired(from: self, webView: webView) { [weak self] newToken in
@@ -200,6 +207,62 @@ final class TaskWebViewController: UIViewController, WKNavigationDelegate, WKUID
     }
 
     private func dismissAfterCallback() {
+        // A completion landing while the offer browser is open must not take
+        // the browser down with the task screen — the CTA fires completeTask
+        // immediately after the open. Finish once the user comes back.
+        if isPresentingBrowser {
+            pendingDismissAfterBrowser = true
+            return
+        }
+        dismiss(animated: true)
+    }
+
+    // MARK: - Opening URLs outside the WebView
+
+    /// True while an `SFSafariViewController` is layered over the task screen.
+    private var isPresentingBrowser = false
+    /// A completion arrived while the browser was open; dismiss when it closes.
+    private var pendingDismissAfterBrowser = false
+
+    /// Opens `raw` outside the WebView. The task screen stays presented
+    /// underneath, so closing the browser returns the user to their task.
+    ///
+    /// - Parameter mode: `"external"` for the system browser; anything else
+    ///   (or `nil`) uses an in-app `SFSafariViewController`. Non-web schemes
+    ///   (`mailto:`, `tel:`, `itms-apps:`, …) always go to their handler app.
+    private func openExternalUrl(_ raw: String, mode: String?) {
+        guard let url = UrlPolicy.sanitizedExternalURL(raw) else {
+            DataPointLogger.w("Refusing to open unusable URL")
+            return
+        }
+
+        guard UrlPolicy.isWebScheme(url.scheme), !UrlPolicy.wantsSystemBrowser(mode) else {
+            UIApplication.shared.open(url, options: [:]) { opened in
+                if !opened {
+                    DataPointLogger.w("No app can handle \(url.scheme ?? "?"): URL")
+                }
+            }
+            return
+        }
+
+        let safari = SFSafariViewController(url: url)
+        safari.delegate = self
+        isPresentingBrowser = true
+        DataPointLogger.d("Opening in-app: \(LogSanitizer.urlForLog(url.absoluteString))")
+        present(safari, animated: true)
+    }
+
+    /// Sends a navigation the WebView must not handle to a browser.
+    private func routeOutsideWebView(_ url: URL) {
+        openExternalUrl(url.absoluteString, mode: nil)
+    }
+
+    // MARK: SFSafariViewControllerDelegate
+
+    func safariViewControllerDidFinish(_ controller: SFSafariViewController) {
+        isPresentingBrowser = false
+        guard pendingDismissAfterBrowser else { return }
+        pendingDismissAfterBrowser = false
         dismiss(animated: true)
     }
 
@@ -221,7 +284,8 @@ final class TaskWebViewController: UIViewController, WKNavigationDelegate, WKUID
                 watchAdInstead: function() { post('watchAdInstead', null); },
                 noTaskAvailable: function() { post('noTaskAvailable', null); },
                 closeTasks: function() { post('closeTasks', null); },
-                sessionExpired: function() { post('sessionExpired', null); }
+                sessionExpired: function() { post('sessionExpired', null); },
+                openExternalUrl: function(url, mode) { post('openExternalUrl', mode ? { url: url, mode: mode } : url); }
             };
         })();
         """
@@ -382,20 +446,72 @@ final class TaskWebViewController: UIViewController, WKNavigationDelegate, WKUID
         webView.isHidden = false
     }
 
+    // MARK: - App lifecycle (listener + WebView)
+
+    private func registerAppLifecycleObservers() {
+        let center = NotificationCenter.default
+        let background = center.addObserver(forName: UIApplication.didEnterBackgroundNotification, object: nil, queue: .main) { [weak self] _ in
+            self?.handleAppLifecycle(.didEnterBackground)
+        }
+        let foreground = center.addObserver(forName: UIApplication.willEnterForegroundNotification, object: nil, queue: .main) { [weak self] _ in
+            self?.handleAppLifecycle(.willEnterForeground)
+        }
+        appLifecycleObservers = [background, foreground]
+    }
+
+    private func removeAppLifecycleObservers() {
+        let center = NotificationCenter.default
+        appLifecycleObservers.forEach { center.removeObserver($0) }
+        appLifecycleObservers.removeAll()
+    }
+
+    private func handleAppLifecycle(_ state: DataPointAppLifecycleState) {
+        DataPoint.notifyAppLifecycleEventFromTaskScreen(state)
+        dispatchAppLifecycleToWebView(state)
+    }
+
+    private func dispatchAppLifecycleToWebView(_ state: DataPointAppLifecycleState) {
+        guard let webView, errorContainer.isHidden else { return }
+        let raw = state.rawValue
+        let js = """
+        (function() {
+            try {
+                var state = '\(raw)';
+                try {
+                    document.dispatchEvent(new CustomEvent('datapoint:app-lifecycle', { detail: { state: state } }));
+                } catch (e1) {}
+                if (typeof window.onDataPointAppLifecycle === 'function') {
+                    window.onDataPointAppLifecycle(state);
+                }
+            } catch (e) {}
+        })();
+        """
+        webView.evaluateJavaScript(js, completionHandler: nil)
+    }
+
     // MARK: WKNavigationDelegate
 
     func webView(_ webView: WKWebView, decidePolicyFor navigationAction: WKNavigationAction, decisionHandler: @escaping (WKNavigationActionPolicy) -> Void) {
-        guard let url = navigationAction.request.url,
-              let host = url.host else {
+        guard let url = navigationAction.request.url else {
             decisionHandler(.cancel)
             return
         }
-        if trustedHost(host) {
+        if isTrustedURL(url) {
             decisionHandler(.allow)
-        } else {
-            DataPointLogger.d("Blocked navigation to untrusted host: \(host)")
-            decisionHandler(.cancel)
+            return
         }
+        // Subframes (custom creatives) may only load trusted hosts. Anything
+        // else is dropped silently: a frame must never be able to launch a
+        // browser. `targetFrame == nil` is a new-window request, handled below.
+        if let frame = navigationAction.targetFrame, !frame.isMainFrame {
+            decisionHandler(.cancel)
+            return
+        }
+        // Off-domain links, redirects and non-web schemes leave the WebView
+        // rather than being dropped: cancelling silently used to strand the
+        // user on a dead CTA.
+        decisionHandler(.cancel)
+        routeOutsideWebView(url)
     }
 
     func webView(_ webView: WKWebView, didFail navigation: WKNavigation!, withError error: Error) {
@@ -414,8 +530,9 @@ final class TaskWebViewController: UIViewController, WKNavigationDelegate, WKUID
         hideErrorUI()
     }
 
-    private func trustedHost(_ host: String) -> Bool {
-        SdkConstants.trustedHosts.contains { host == $0 || host.hasSuffix(".\($0)") }
+    /// A task-wall page that should keep rendering inside the WebView.
+    private func isTrustedURL(_ url: URL) -> Bool {
+        UrlPolicy.isWebScheme(url.scheme) && UrlPolicy.isTrustedHost(url.host)
     }
 
     private func isConnectivityError(_ error: Error) -> Bool {
@@ -434,6 +551,25 @@ final class TaskWebViewController: UIViewController, WKNavigationDelegate, WKUID
     }
 
     // MARK: WKUIDelegate
+
+    func webView(
+        _ webView: WKWebView,
+        createWebViewWith configuration: WKWebViewConfiguration,
+        for navigationAction: WKNavigationAction,
+        windowFeatures: WKWindowFeatures
+    ) -> WKWebView? {
+        // target="_blank" and window.open never get their own WKWebView: a
+        // link back to the task wall loads in place, anything else goes to a
+        // browser. Returning nil tells WebKit no window was created.
+        if let url = navigationAction.request.url {
+            if isTrustedURL(url) {
+                webView.load(URLRequest(url: url))
+            } else {
+                routeOutsideWebView(url)
+            }
+        }
+        return nil
+    }
 
     func webView(_ webView: WKWebView, runJavaScriptAlertPanelWithMessage message: String, initiatedByFrame frame: WKFrameInfo, completionHandler: @escaping () -> Void) {
         let alert = UIAlertController(title: nil, message: message, preferredStyle: .alert)
