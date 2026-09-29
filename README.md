@@ -48,6 +48,29 @@ DataPoint.setListener(self)
 DataPoint.showTasks(from: viewController)
 ```
 
+### Check Availability Before Showing an Entry Point (Optional)
+
+```swift
+DataPoint.checkTaskAvailability { result in
+    switch result {
+    case .success(let availability):
+        earnButton.isHidden = !availability.isAvailable
+        // availability.reason: "available" | "no_task" | "daily_limit_reached" | "access_disabled"
+        // availability.message: readable form of reason, for your logs
+    case .failure(let error):
+        // Check could not be made (offline, server error). Decide your own fallback.
+        print(error.message, error.code)
+    }
+}
+```
+
+The answer is exact for this user — the same rules the task wall applies — and the call is
+read-only on the server. Call it when a screen appears rather than on a timer.
+
+`showTasks(from:)` runs the same check itself before presenting the screen: when nothing is
+available you get `noTaskAvailable()` immediately and no screen is shown. If the check fails
+or times out (3 s), the screen opens as before.
+
 ### Implement DataPointListener
 
 ```swift

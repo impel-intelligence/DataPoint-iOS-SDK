@@ -262,6 +262,64 @@ enum DataPointApi {
         return out
     }
 
+    /// GET /availability?device_id=…&environment=… with the app key in `X-Api-Key`.
+    /// Read-only on the server (never creates identity rows). Blocks the calling queue.
+    static func checkAvailability(
+        baseURL: String,
+        apiKey: String,
+        deviceId: String,
+        environment: String,
+        timeout: TimeInterval = 15
+    ) -> ApiResult<TaskAvailability> {
+        guard var components = URLComponents(string: baseURL + SdkConstants.availabilityEndpoint) else {
+            return .error(message: "Invalid URL", httpCode: 0)
+        }
+        components.queryItems = [
+            URLQueryItem(name: "device_id", value: deviceId),
+            URLQueryItem(name: "environment", value: environment)
+        ]
+        guard let url = components.url else {
+            return .error(message: "Invalid URL", httpCode: 0)
+        }
+
+        var request = URLRequest(url: url)
+        request.httpMethod = "GET"
+        request.setValue("application/json", forHTTPHeaderField: "Accept")
+        request.setValue(apiKey, forHTTPHeaderField: "X-Api-Key")
+        request.timeoutInterval = timeout
+
+        DataPointLogger.d("GET \(url.path)")
+
+        let sem = DispatchSemaphore(value: 0)
+        var out: ApiResult<TaskAvailability> = .error(message: "Network error", httpCode: 0)
+
+        URLSession.shared.dataTask(with: request) { data, response, error in
+            defer { sem.signal() }
+            if let error {
+                DataPointLogger.e("availability request failed", error: error)
+                out = .error(message: error.localizedDescription, httpCode: 0)
+                return
+            }
+            let code = (response as? HTTPURLResponse)?.statusCode ?? 0
+            let bodyString = data.flatMap { String(data: $0, encoding: .utf8) } ?? ""
+            DataPointLogger.d("availability response http=\(code) bytes=\(bodyString.count)")
+            guard (200...299).contains(code) else {
+                out = .error(message: parseErrorMessage(bodyString, httpCode: code), httpCode: code)
+                return
+            }
+            guard let data,
+                  let json = try? JSONSerialization.jsonObject(with: data) as? [String: Any],
+                  let availability = TaskAvailability(json: json) else {
+                out = .error(message: "Malformed availability response", httpCode: code)
+                return
+            }
+            out = .success(availability)
+        }.resume()
+
+        sem.wait()
+        return out
+    }
+
     static func parseErrorMessage(_ body: String?, httpCode: Int) -> String {
         guard let body, !body.isEmpty else { return "Request failed (\(httpCode))" }
         guard let data = body.data(using: .utf8),

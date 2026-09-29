@@ -2,6 +2,22 @@
 
 All notable changes to the DataPoint iOS SDK.
 
+## Unreleased
+
+### Added
+
+- `DataPoint.checkTaskAvailability(completion:)`: ask whether `showTasks` would have a task
+  right now, before rendering an entry point. Delivers `TaskAvailability` with
+  `isAvailable`, a machine-readable `reason` (`available`, `no_task`,
+  `daily_limit_reached`, `access_disabled`) and a readable `message`, or a
+  `DataPointError`. Read-only on the server; errors are reported rather than guessed.
+
+### Changed
+
+- `showTasks(from:)` pre-checks availability before presenting the task screen. When nothing
+  is available, `noTaskAvailable()` fires immediately and no screen is shown. A failed or
+  slow (> 3 s) pre-check presents the screen as before.
+
 ## 1.1.0 — 2026-09-25
 
 ### Added

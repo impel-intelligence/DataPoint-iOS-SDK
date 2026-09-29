@@ -18,6 +18,7 @@ enum SdkConstants {
     static let validateEndpoint = "/initialize"
     static let userAttributesEndpoint = "/user/attributes"
     static let assignAppUserIdEndpoint = "/assign_app_user_id"
+    static let availabilityEndpoint = "/availability"
 
     static let productionTaskURL = "https://task.trydatapoint.com/"
     static let sandboxTaskURL = productionTaskURL
