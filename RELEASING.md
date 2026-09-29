@@ -66,6 +66,34 @@ Things to confirm on every release:
 
 ---
 
+## 1.2.0 checklist
+
+Changes since v1.1.0:
+
+- `DataPoint.checkTaskAvailability(completion:)` delivering `TaskAvailability`
+  (`isAvailable`, `reason`, `message`) or `DataPointError`.
+- `showTasks(from:)` pre-checks availability (3 s budget, fails open) and fires
+  `noTaskAvailable()` without presenting a screen when nothing is available.
+
+Device pass specific to this release (sample app: Initialize → Check Task Availability → Show Tasks):
+
+- Inventory present: check says available, Show Tasks presents the wall.
+- No inventory: check says `no_task`; Show Tasks fires `noTaskAvailable()` and **no screen flashes**.
+- Airplane mode: check reports an error; Show Tasks still presents the screen with its offline message.
+- Daily limit reached (if reproducible): check says `daily_limit_reached`.
+
+Status:
+
+- [x] `sdkVersion` and README at 1.2.0
+- [x] Changelog entry
+- [x] Package builds, unit tests pass on the simulator
+- [ ] Device pass (above)
+- [ ] PR merged to `main`, tag `v1.2.0` pushed on the merged commit
+- [ ] GitHub release published
+- [ ] Resolved from a fresh project
+
+---
+
 ## 1.1.0 checklist
 
 - [x] `sdkVersion` and README at 1.1.0
