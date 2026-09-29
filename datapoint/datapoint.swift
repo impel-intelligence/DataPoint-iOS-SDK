@@ -20,6 +20,8 @@ public enum DataPoint {
     private static var userId: String?
     private static weak var activeTaskController: TaskWebViewController?
     private static var isCallbackDispatched = false
+    /// Budget for the pre-check inside `showTasks`; on expiry the screen opens anyway.
+    private static let precheckTimeout: TimeInterval = 3
 
     private static let mainQueue = DispatchQueue.main
     private static let worker = DispatchQueue(label: "com.datapoint.sdk.worker", qos: .userInitiated)
@@ -170,7 +172,51 @@ public enum DataPoint {
             return
         }
 
-        launchTaskScreen(presentingViewController: presentingViewController, prefs: prefs)
+        precheckThenLaunch(presentingViewController: presentingViewController, prefs: prefs)
+    }
+
+    /// Asks the server whether there is anything to show before presenting the task screen, so
+    /// a user with nothing to do gets `noTaskAvailable()` straight away instead of a screen
+    /// that opens, loads and dismisses itself.
+    ///
+    /// The pre-check is an optimization, never a gate: on any error or timeout the screen opens
+    /// and the page's own no-task path applies.
+    fileprivate static func precheckThenLaunch(presentingViewController: UIViewController, prefs: DataPointPreferences) {
+        guard let key = apiKey, !key.isEmpty else {
+            launchTaskScreen(presentingViewController: presentingViewController, prefs: prefs)
+            return
+        }
+        let deviceId = prefs.deviceId
+        let env = environment
+        worker.async {
+            let result = DataPointApi.checkAvailability(
+                baseURL: SdkConstants.apiBaseURL(for: env),
+                apiKey: key,
+                deviceId: deviceId,
+                environment: env.rawValue,
+                timeout: precheckTimeout
+            )
+            switch result {
+            case .success(let availability):
+                if availability.isAvailable {
+                    postOnMain { launchTaskScreen(presentingViewController: presentingViewController, prefs: prefs) }
+                } else {
+                    DataPointLogger.d("showTasks() no task: reason=\(availability.reason)")
+                    deliverNoTask(availability)
+                }
+            case .error(let message, let http):
+                DataPointLogger.w(
+                    "showTasks() pre-check failed (HTTP \(http)), opening anyway: \(LogSanitizer.safeErrorSnippet(message))"
+                )
+                postOnMain { launchTaskScreen(presentingViewController: presentingViewController, prefs: prefs) }
+            }
+        }
+    }
+
+    /// No screen was presented, so this bypasses the screen-lifecycle bookkeeping on purpose.
+    private static func deliverNoTask(_ availability: TaskAvailability) {
+        DataPointLogger.d("noTaskAvailable (pre-check): \(availability.message)")
+        postOnMain { listener?.noTaskAvailable() }
     }
 
     /// Dismisses the task screen if it is currently visible.
@@ -286,6 +332,47 @@ public enum DataPoint {
                 let code = DataPointApi.httpCodeToErrorCode(http)
                 DataPointLogger.e("assign_app_user_id failed (HTTP \(http)): \(LogSanitizer.safeErrorSnippet(message))")
                 postOnMain { callback?.onError(message: message, code: code) }
+            }
+        }
+    }
+
+    /// Ask whether `showTasks` would have a task to show right now, before you render an
+    /// entry point. The answer is exact for this user: it applies the same eligibility,
+    /// daily-limit and publisher rules as the task wall itself.
+    ///
+    /// Call it when a screen appears, not on a timer. `completion` runs on the main
+    /// thread; a `.failure` means the check could not be made, and the SDK does not guess.
+    public static func checkTaskAvailability(
+        completion: @escaping (Result<TaskAvailability, DataPointError>) -> Void
+    ) {
+        guard state == .initialized, let prefs = preferences, let key = apiKey, !key.isEmpty else {
+            DataPointLogger.e("checkTaskAvailability() – SDK not initialized")
+            postOnMain {
+                completion(.failure(DataPointError(
+                    message: "SDK not initialized. Call initialize() first.",
+                    code: ErrorCode.sdkNotInitialized.rawValue
+                )))
+            }
+            return
+        }
+
+        let deviceId = prefs.deviceId
+        let env = environment
+        worker.async {
+            let result = DataPointApi.checkAvailability(
+                baseURL: SdkConstants.apiBaseURL(for: env),
+                apiKey: key,
+                deviceId: deviceId,
+                environment: env.rawValue
+            )
+            switch result {
+            case .success(let availability):
+                DataPointLogger.d("availability available=\(availability.isAvailable) reason=\(availability.reason)")
+                postOnMain { completion(.success(availability)) }
+            case .error(let message, let http):
+                let code = DataPointApi.httpCodeToErrorCode(http)
+                DataPointLogger.e("availability failed (HTTP \(http)): \(LogSanitizer.safeErrorSnippet(message))")
+                postOnMain { completion(.failure(DataPointError(message: message, code: code))) }
             }
         }
     }
@@ -511,7 +598,7 @@ public enum DataPoint {
 
         func onSuccess() {
             guard let presenter else { return }
-            DataPoint.launchTaskScreen(presentingViewController: presenter, prefs: prefs)
+            DataPoint.precheckThenLaunch(presentingViewController: presenter, prefs: prefs)
         }
 
         func onError(message: String, code: Int) {

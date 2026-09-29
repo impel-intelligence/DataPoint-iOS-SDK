@@ -1,7 +1,7 @@
 import Foundation
 
 enum SdkConstants {
-    static let sdkVersion = "1.1.0"
+    static let sdkVersion = "1.2.0"
     static let platform = "ios"
 
     /// Live API (used when `Environment.production`).
@@ -18,6 +18,7 @@ enum SdkConstants {
     static let validateEndpoint = "/initialize"
     static let userAttributesEndpoint = "/user/attributes"
     static let assignAppUserIdEndpoint = "/assign_app_user_id"
+    static let availabilityEndpoint = "/availability"
 
     static let productionTaskURL = "https://task.trydatapoint.com/"
     static let sandboxTaskURL = productionTaskURL
